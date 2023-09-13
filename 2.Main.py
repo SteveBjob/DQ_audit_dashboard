@@ -1,13 +1,19 @@
 # Databricks notebook source
+from pyspark.sql.functions import col, when, lit, max, expr, to_timestamp, date_format, isnan, collect_list, array, first, map_concat, to_json, from_json, map_filter, format_number, round, concat
+from pyspark.sql.types import ArrayType, DateType, MapType, StructField, StringType, IntegerType, StructType, DoubleType, LongType
+from pyspark.sql import DataFrame
+from datetime import datetime, date,timedelta
+from dateutil.relativedelta import relativedelta
+import re
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ###Global
 
 # COMMAND ----------
 
-def myspark_to_list(df:DataFrame ,col_name: str):
-    lists = df.select(col_name).collect()
-    lists = [row[col_name] for row in lists]
-    return lists
+# MAGIC %run "/Users/chanwitt@ais.co.th/DQ_Audit_Dashboard_Report/incremental/3.module_common_function"
 
 # COMMAND ----------
 
@@ -16,106 +22,7 @@ def myspark_to_list(df:DataFrame ,col_name: str):
 
 # COMMAND ----------
 
-def rule_clean(dq_rules_spark:DataFrame):
-    rules_cleaned_df = dq_rules_spark.withColumn("Logic_SQL", when(col("Logic_spark").isNull(), col("Logic_SQL"))
-                                                .otherwise(None))\
-                                                .filter(col("Logic_spark").isNotNull() | col("Logic_SQL").isNotNull())
-    return rules_cleaned_df
-
-def run_sql(df:DataFrame, logic:str):
-    """run sql command that store in sharepoint"""
-    try:
-      sql_value = df.filter(logic).count()
-    except:
-      sql_value = None
-    return sql_value
-  
-def loadMaster(master_path:str, master_col:str):
-    try:
-        master_df = spark.read.format("csv") \
-                            .option("header", "true") \
-                            .load(master_path)
-        master_list = myspark_to_list(master_df, master_col)
-    except:
-        master_list = [None]
-    return master_list
-  
-def run_spark(df:DataFrame ,logic:str ,master_list:list):
-    try:
-      spark_value = eval(logic).count()
-    except:
-      spark_value = None
-    return spark_value
-
-def good_value_col(value_list:dict):
-  if all(value is None for value in value_list.values()):
-    result = None
-  else:
-    result = sum(value for value in value_list.values())
-  return result
-
-def select_sql_logic(table_rules_filtered_df):
-    ##### Select only SQL logic
-    sql_rules_filtered_df = table_rules_filtered_df.filter(col('Logic_SQL').isNotNull())
-    list_sql_rule = myspark_to_list(sql_rules_filtered_df, 'Logic_SQL')
-    print(f'Number of SQL rules: {len(list_sql_rule)}')
-    list_sql_dict = myspark_to_list(sql_rules_filtered_df, "All_partition_good")
-    return sql_rules_filtered_df, list_sql_rule, list_sql_dict
-
-def select_spark_logic(table_rules_filtered_df):
-    ##### Select only spark logic
-    spark_rules_filtered_df = table_rules_filtered_df.filter(col('Logic_spark').isNotNull())
-    list_spark_rule = myspark_to_list(spark_rules_filtered_df, 'Logic_spark')
-    print(f'Number of spark rules: {len(list_spark_rule)}')
-    list_spark_dict = myspark_to_list(spark_rules_filtered_df, "All_partition_good")
-
-    # if we path master to check value in col is in master?
-    list_master_path = myspark_to_list(spark_rules_filtered_df ,'Master_Path')
-    list_master_col = myspark_to_list(spark_rules_filtered_df ,'Master_Col_Name')
-    master_lists = [loadMaster(master_path, master_col) if master_path != None and master_col != None
-                                                        else None
-                                                        for master_path, master_col in zip(list_master_path, list_master_col)]
-    print(f"    master path: {list_master_path}")
-    print(f"    master col: {list_master_col}")
-    print(f"    master list: {master_lists}")
-    return spark_rules_filtered_df, list_spark_rule, list_spark_dict, list_master_path, list_master_col, master_lists
-
-def apply_rules(df_partition_spark, partition_count_row, list_sql_rule, list_spark_rule, master_lists, all_partition_sql_value, all_partition_sql_rows, all_partition_spark_value, all_partition_spark_rows):
-    if len(list_sql_rule) > 0:
-        sql_value = [run_sql(df_partition_spark, logic) for logic in list_sql_rule]
-        print(f"        good sql value of each rule: {sql_value}")
-        partition_rows = [partition_count_row for logic in list_sql_rule]
-        print(f"        good sql value of partition rows: {partition_rows}")
-        all_partition_sql_value.append(sql_value)
-        all_partition_sql_rows.append(partition_rows)
-
-    if len(list_spark_rule) > 0:
-        spark_value = [run_spark(df_partition_spark, logic, master_list) for logic, master_list in zip(list_spark_rule, master_lists)]
-        print(f"        good spark value of each rule: {spark_value}")
-        partition_rows = [partition_count_row for logic in list_spark_rule]
-        print(f"        good spark value of partition rows: {partition_rows}")
-        all_partition_spark_value.append(spark_value)
-        all_partition_spark_rows.append(partition_rows)
-
-def process_df(table, partition_strings, partition_col_name, conditions_list, list_sql_rule, list_spark_rule, master_lists, all_partition_sql_value, all_partition_sql_rows, all_partition_spark_value, all_partition_spark_rows):
-    countpar = 0
-    for partition in partition_strings:
-        countpar += 1
-        print(f'    Currently, processing the partition number: {countpar}/{len(partition_strings)}')
-        print(f"    working on this partition: {partition}")
-        df_partition_spark = call_c360_by_partition(table, partition, partition_col_name, conditions_list)
-        df_partition_spark.persist()
-        partition_count_row = df_partition_spark.count()
-        print(f"      partition rows count: {partition_count_row}")
-
-        apply_rules(df_partition_spark, partition_count_row, list_sql_rule, list_spark_rule, master_lists, all_partition_sql_value, all_partition_sql_rows, all_partition_spark_value, all_partition_spark_rows)
-        
-        df_partition_spark.unpersist()
-
-    print(f"value of all sql rules: {all_partition_sql_value}")
-    print(f"value of all partition sql rows: {all_partition_sql_rows}")
-    print(f"value of all spark rules:{all_partition_spark_value}")
-    print(f"value of all partition spark rows:{all_partition_spark_rows}")
+# MAGIC %run "/Users/chanwitt@ais.co.th/DQ_Audit_Dashboard_Report/incremental/3.module_rules"
 
 # COMMAND ----------
 
@@ -124,32 +31,7 @@ def process_df(table, partition_strings, partition_col_name, conditions_list, li
 
 # COMMAND ----------
 
-# Define the UDF (User-Defined Function) for parsing and converting excluded_dates
-def parse_excluded_dates(excluded_dates):
-    excluded_dates = excluded_dates.strip("[]").split(" | ")
-    excluded_dates = [datetime.strptime(date_str, "%Y-%m-%d").date() for date_str in excluded_dates if date_str]
-    return excluded_dates
-
-def get_partition_col_name(table:str):
-    partition_col_name = ("start_of_month", "partition_month", "start_of_week", "event_partition_date")
-    if table.startswith("l1_"):
-      partition_col_name = ['event_partition_date']
-      df = spark.sql(f"SELECT * FROM c360_external.{table} WHERE 1=0")
-      column_names = df.columns
-      common_values = list(set(partition_col_name).intersection(column_names))
-    else :
-      df = spark.sql(f"SELECT * FROM c360_external.{table} WHERE 1=0")
-      column_names = df.columns
-      common_values = list(set(partition_col_name).intersection(column_names))
-    return common_values
-
-def call_c360_by_partition(table:str, partition:str, partition_col_name:list, conditions_list:list):
-    if not conditions_list:
-      df_condition_partition_filtered = spark.sql(f'select * from c360_external.{table} where {partition_col_name[0]} = "{partition}"')
-    else:
-      df_condition_partition_filtered = spark.sql(f'select * from c360_external.{table} where {partition_col_name[0]} = "{partition}"')
-      df_condition_partition_filtered = df_condition_partition_filtered.filter(expr(conditions_list[0]))
-    return df_condition_partition_filtered
+# MAGIC %run "/Users/chanwitt@ais.co.th/DQ_Audit_Dashboard_Report/incremental/3.module_c360_df"
 
 # COMMAND ----------
 
@@ -158,31 +40,7 @@ def call_c360_by_partition(table:str, partition:str, partition_col_name:list, co
 
 # COMMAND ----------
 
-def combine_good_and_total_values(col1, col2):
-    return [[col1[index1], col2[index2]] for index1, index2 in zip(range(len(col1)), range(len(col2)))]
-
-def combine_date_and_values(col1, col2):
-    return {col1[indexa]: col2[indexb] for indexa, indexb in zip(range(len(col1)), range(len(col2)))}
-
-def no_more_run_partition(col, partition_strings):
-    return {date: values for date, values in col.items() if date in partition_strings}
-
-def want_to_run_partitions(col, partition_strings):
-    return [date for date in partition_strings if date not in col.keys()]
-
-def collect_latest_result(table_result_db:str, table_schema, partition_result_db:str, partition_schema):
-    try:
-        table_result = spark.sql("select * from {}".format(table_result_db))
-        max_exec_date = table_result.select(max("Exec_date")).first()[0]
-        latest_table_result = table_result.filter(col("Exec_date") == max_exec_date)
-
-        partition_result = spark.sql("select * from {}".format(partition_result_db))
-        max_exec_date_partition = partition_result.select(max("Exec_date")).first()[0]
-        latest_partition_result = partition_result.filter(col("Exec_date") == max_exec_date_partition)
-    except:
-        latest_table_result = spark.createDataFrame([], previous_table_schema)
-        latest_partition_result = spark.createDataFrame([], previous_partitions_schema)
-    return latest_table_result, latest_partition_result
+# MAGIC %run "/Users/chanwitt@ais.co.th/DQ_Audit_Dashboard_Report/incremental/3.module_lastest_result"
 
 # COMMAND ----------
 
@@ -191,42 +49,7 @@ def collect_latest_result(table_result_db:str, table_schema, partition_result_db
 
 # COMMAND ----------
 
-def add_rule_result_to_df(list_dict, partition_strings, all_partition_value, all_partition_rows, rules_filtered_df, col_name):
-    pd_df = rules_filtered_df.toPandas()
-    if len(list_dict) > 0:
-        list_dict = [{k: [all_partition_value[j][i], all_partition_rows[j][i]] for j, k in enumerate(partition_strings)} for i, d in enumerate(list_dict)]
-        pd_df[col_name] = list_dict
-    else:
-        pd_df = pd.DataFrame()
-    return pd_df
-
-def add_table_conditions(dq_rule_res_s, conditions_list):
-    # If conditions_list is empty, set the 'Condition' column to None using lit
-    if not conditions_list:
-        dq_rule_res_s = dq_rule_res_s.withColumn("Condition", lit(None))
-    else:
-        # If conditions_list is not empty, use the first element from the list and use lit
-        dq_rule_res_s = dq_rule_res_s.withColumn("Condition", lit(conditions_list[0]))
-    return dq_rule_res_s
-
-def sum_of_values(All_partition_good, index):
-    if All_partition_good is None:
-        return None
-
-    res = 0
-    for _, values in All_partition_good.items():
-        value_at_index = values[index]
-        if value_at_index is not None:
-            res += value_at_index
-    return res
-
-def save_df_to_databricks_by_granular(table_success_db, partition_success_db, table_fail_db, partition_fail_db):
-    good_result_output.write.format("delta").mode("append").saveAsTable(table_success_db)
-    good_result_output.write.format("delta").mode("append").saveAsTable("dg_dq_report.c360_external_dq_rule_success_report_all")
-    history_good_result_output.write.format("delta").mode("append").saveAsTable(partition_success_db)
-    error_result_output.write.format("delta").mode("append").saveAsTable(table_fail_db)
-    error_result_output.write.format("delta").mode("append").saveAsTable("dg_dq_report.c360_external_dq_rule_fail_report_all")
-    history_error_result_output.write.format("delta").mode("append").saveAsTable(partition_fail_db)
+# MAGIC %run "/Users/chanwitt@ais.co.th/DQ_Audit_Dashboard_Report/incremental test/3.module_result"
 
 # COMMAND ----------
 
@@ -239,11 +62,13 @@ exec_date = datetime.today().strftime("%Y-%m-%d")
 print(f"execute date: {exec_date}")
 
 # create and clean conditions df
+#null not include
 dq_conditions_spark = dq_conditions_spark.filter(col("Condition").isNotNull())
 print("-----------------------------------------this is clean conditions table")
 dq_conditions_spark.display()
 
 # create and clean rules df
+#create col Rule_Name 
 rules_clean_spark = rule_clean(dq_rules_spark)
 rules_clean_spark = rules_clean_spark.withColumn("Exec_date", lit(exec_date))
 rules_clean_spark = rules_clean_spark.withColumn("Rule_Name", concat(col("Table_name"), lit("."), col("Column"), lit("."), col("Dimension")))
@@ -327,7 +152,6 @@ previous_partitions_schema = StructType([
 ])
 
 latest_table_result, latest_partition_result = collect_latest_result(table_success_db, previous_table_schema, partition_success_db, previous_partitions_schema)
-latest_partition_result = latest_partition_result.withColumn("All_partition", col("All_partition").cast("string"))
 latest_table_result.display()
 latest_partition_result.display()
 previous_tables_result = spark.createDataFrame([], previous_table_schema)
@@ -349,7 +173,7 @@ lastest_run_combine_raw = lastest_run_combine_raw.withColumn(
     "dict_date_values",
     combine_date_and_values_udf(col("collect_list(All_partition)"), col("combined_values"))
 )
-lastest_run_combine_raw = lastest_run_combine_raw.withColumnRenamed("All_partition", "All_partition_good")
+# lastest_run_combine_raw = lastest_run_combine_raw.withColumnRenamed("All_partition", "All_partition_good")
 
 print("-----------------------------------------this is my partitions lastest_run")
 lastest_run_combine_raw.display()
@@ -511,6 +335,7 @@ for table in table_lists:
                 filtered_result_df = filtered_result_df.drop("Table_name2")
                 if have_new_rules == 0:
                     print(">>>>>>>>>>>>>>>>>no new rules go next<<<<<<<<<<<<<<<<<<<<<<")
+                    print("=========================================================================================================================================================================================")
 
                 else :
                     print("new rules")
@@ -636,6 +461,8 @@ for table in table_lists:
             result = result.unionByName(dq_new_partition_rule_res_s)
 
     print("=========================================================================================================================================================================================")
+
+spark.conf.set("spark.sql.mapKeyDedupPolicy", "LAST_WIN")
 
 previous_tables_result = previous_tables_result.withColumn("Exec_date", lit(exec_date))
 previous_tables_result.display()
@@ -861,7 +688,6 @@ history_good_result_output = history_good_result_output.select([history_good_res
 error_result_output = error_result_output.select([error_result_output[col].cast(table_schema[col].dataType) for col in error_result_output.columns])
 history_error_result_output = history_error_result_output.select([history_error_result_output[col].cast(partition_schema[col].dataType) for col in history_error_result_output.columns])
 
-# # Create or read your DataFrames (replace with your actual data)
 # good_result_output = spark.createDataFrame(good_result_output, schema=table_schema)
 # history_good_result_output = spark.createDataFrame(history_good_result_output, schema=partition_schema)
 # error_result_output = spark.createDataFrame(error_result_output, schema=table_schema)

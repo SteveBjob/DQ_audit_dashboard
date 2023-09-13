@@ -17,7 +17,7 @@ import pyspark.pandas as ps
 import pandas as pd
 
 path_rule = "dbfs:/mnt/dmbd-dg/Dq_data_audit_dashboard/Production/external_dq_rules_and_conditions.xlsx"
-dq_rules_ps = ps.read_excel(io = path_rule, engine='openpyxl', sheet_name = 'Weekly')
+dq_rules_ps = ps.read_excel(io = path_rule, engine='openpyxl', sheet_name = 'Daily')
 dq_rules_spark = dq_rules_ps.to_spark()
 dq_rules_spark.display()
 
@@ -63,32 +63,19 @@ def generate_dates(start_date, end_date, excluded_dates):
     while current_date <= end_date:
         if current_date not in excluded_dates:
             dates.append(current_date)
-        current_date += timedelta(weeks=1)
+        current_date += timedelta(days=1)
     return dates
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ###lib
+table_success_db = "dg_dq_report.c360_external_dq_rule_success_daily"
+partition_success_db = "dg_dq_report.c360_external_dq_rule_success_daily_partitions"
+table_fail_db = "dg_dq_report.c360_external_dq_rule_fail_daily"
+partition_fail_db = "dg_dq_report.c360_external_dq_rule_fail_daily_partitions"
 
 # COMMAND ----------
 
-from pyspark.sql.functions import col, when, lit, max, expr, to_timestamp, date_format, isnan, collect_list, array, first, map_concat, to_json, from_json, map_filter, format_number, round, concat
-from pyspark.sql.types import ArrayType, DateType, MapType, StructField, StringType, IntegerType, StructType, DoubleType, LongType
-from pyspark.sql import DataFrame
-from datetime import datetime, date,timedelta
-from dateutil.relativedelta import relativedelta
-
-# COMMAND ----------
-
-table_success_db = "dg_dq_report.c360_external_dq_rule_success_weekly"
-partition_success_db = "dg_dq_report.c360_external_dq_rule_success_weekly_partitions"
-table_fail_db = "dg_dq_report.c360_external_dq_rule_fail_weekly"
-partition_fail_db = "dg_dq_report.c360_external_dq_rule_fail_weekly_partitions"
-
-# COMMAND ----------
-
-# MAGIC %run "/Users/chanwitt@ais.co.th/DQ_Audit_Dashboard_Report/incremental/Main"
+# MAGIC %run "/Users/chanwitt@ais.co.th/DQ_Audit_Dashboard_Report/incremental/2.Main"
 
 # COMMAND ----------
 
